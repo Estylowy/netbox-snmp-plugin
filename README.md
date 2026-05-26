@@ -50,11 +50,30 @@ NetBox 4.x plugin for querying devices and interfaces via SNMP, comparing data w
 sudo dnf install net-snmp net-snmp-devel python3-devel gcc -y
 ```
 
-### 2. Upload and install
+### 2. Download and install
+
+Clone or download this repository. The folder structure must be preserved exactly as follows — pip requires it to install correctly:
+
+```
+netbox_snmp_plugin/
+├── setup.py
+├── MANIFEST.in
+└── netbox_snmp_plugin/
+    ├── __init__.py
+    ├── views.py
+    ├── urls.py
+    ├── snmp.py
+    ├── navigation.py
+    ├── custom_fields.py
+    ├── template_content.py
+    ├── migrations/
+    ├── templates/
+    └── templatetags/
+```
+
+If you're uploading manually (e.g. via GitHub download), make sure to recreate this folder structure on your server before installing.
 
 ```bash
-cd /opt/plugins
-tar xzf netbox_snmp_plugin.tar.gz
 sudo /opt/netbox/venv/bin/pip install easysnmp
 sudo /opt/netbox/venv/bin/pip install /opt/plugins/netbox_snmp_plugin/
 ```
