@@ -1,0 +1,50 @@
+<div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <strong>
+      <i class="mdi mdi-radar text-info me-1"></i> SNMP Inspector
+    </strong>
+    <a href="/plugins/snmp/bulk/" class="btn btn-ghost-secondary btn-sm">
+      Odpytaj urządzenia <i class="mdi mdi-arrow-right"></i>
+    </a>
+  </div>
+  <div class="card-body">
+    {% with cf=device.custom_field_data %}
+    <table class="table table-hover attr-table">
+      <tr>
+        <td>Ostatnie odpytanie</td>
+        <td>{{ cf.snmp_last_fetch|default:"—" }}</td>
+      </tr>
+      <tr>
+        <td>Przez użytkownika</td>
+        <td>{{ cf.snmp_last_fetch_by|default:"—" }}</td>
+      </tr>
+      <tr>
+        <td>Status</td>
+        <td>
+          {% if cf.snmp_last_fetch_status == "ok" %}
+            <span class="badge bg-success" style="color:#fff!important;">ok</span>
+          {% elif cf.snmp_last_fetch_status %}
+            <span class="badge bg-danger" style="color:#fff!important;" title="{{ cf.snmp_last_fetch_status }}">error</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      <tr>
+        <td>sysName</td>
+        <td>{{ cf.snmp_sys_name|default:"—" }}</td>
+      </tr>
+      <tr>
+        <td>Uptime</td>
+        <td>{{ cf.snmp_sys_uptime|default:"—" }}</td>
+      </tr>
+      <tr>
+        <td>Interfejsy</td>
+        <td>{{ cf.snmp_iface_summary|default:"—" }}</td>
+      </tr>
+      <tr>
+        <td>Łącznie odpytań</td>
+        <td>{{ cf.snmp_fetch_count|default:"0" }}</td>
+      </tr>
+    </table>
+    {% endwith %}
+  </div>
+</div>

@@ -1,0 +1,2 @@
+recursive-include netbox_snmp_plugin/templates *
+recursive-include netbox_snmp_plugin/static *

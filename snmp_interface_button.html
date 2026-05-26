@@ -1,0 +1,501 @@
+{# Przycisk w nagłówku strony interfejsu #}
+{% if interface.device %}
+<button type="button"
+        class="btn btn-sm" style="background:#0077aa;color:#fff;border:none;"
+        onclick="snmpOpenModal({{ interface.pk }}, '{{ interface.name|escapejs }}')"
+        title="SNMP Inspector — pobierz dane z urządzenia">
+  <i class="mdi mdi-radar"></i> SNMP
+</button>
+{% endif %}
+
+{% if not snmp_modal_rendered %}
+{% with snmp_modal_rendered=True %}
+
+<div id="snmp-modal-overlay"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
+            z-index:9999;align-items:center;justify-content:center;">
+<div id="snmp-modal"
+     style="background:var(--nbx-body-bg,#1a1e24);border:1px solid var(--nbx-border-color,#2d3748);
+            border-radius:8px;width:860px;max-width:96vw;max-height:90vh;
+            display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);">
+
+  {# ── Nagłówek ── #}
+  <div style="padding:12px 18px;border-bottom:1px solid var(--nbx-border-color,#2d3748);
+              display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+              border-radius:8px 8px 0 0;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <i class="mdi mdi-radar text-info" style="font-size:22px;"></i>
+      <div>
+        <div style="font-weight:600;font-size:.95rem;">SNMP Inspector</div>
+        <div id="snmp-sub" style="font-size:.78rem;opacity:.55;">—</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div class="btn-group btn-group-sm" role="group">
+        <input type="radio" class="btn-check" name="snmp-ver-radio" id="snmp-ver-v2c" value="v2c" checked>
+        <label class="btn btn-outline-info" for="snmp-ver-v2c">v2c</label>
+        <input type="radio" class="btn-check" name="snmp-ver-radio" id="snmp-ver-v3" value="v3">
+        <label class="btn btn-outline-info" for="snmp-ver-v3">v3</label>
+      </div>
+      <button id="snmp-fetch-btn" onclick="snmpFetch()" class="btn btn-sm btn-primary">
+        <i class="mdi mdi-download-network"></i> Pobierz
+      </button>
+      <button id="snmp-demo-btn" onclick="snmpDemo()" class="btn btn-sm btn-outline-warning"
+              title="Wypełnij przykładowymi danymi (tryb demo — bez połączenia z urządzeniem)">
+        <i class="mdi mdi-flask-outline"></i> Demo
+      </button>
+      <label class="form-check form-switch mb-0 ms-1"
+             title="Włącz pobieranie counterów (in/out octets, błędy, discardy). Wyłącz dla szybszego odpytania.">
+        <input class="form-check-input" type="checkbox" id="snmp-counters" checked>
+        <span class="form-check-label" style="font-size:.78rem;">Countery</span>
+      </label>
+      <button onclick="snmpClose()" class="btn btn-sm btn-ghost-secondary" style="padding:4px 8px;">
+        <i class="mdi mdi-close"></i>
+      </button>
+    </div>
+  </div>
+
+  {# ── Taby ── #}
+  <ul class="nav nav-tabs px-3 pt-2 flex-shrink-0" id="snmp-tabs" style="display:none!important;">
+    <li class="nav-item">
+      <button class="nav-link active" data-tab="compare" onclick="snmpTab('compare')">
+        <i class="mdi mdi-compare me-1"></i>Porównanie
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-tab="counters" onclick="snmpTab('counters')">
+        <i class="mdi mdi-chart-line me-1"></i>Countery
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-tab="system" onclick="snmpTab('system')">
+        <i class="mdi mdi-server me-1"></i>System
+      </button>
+    </li>
+    <li class="nav-item">
+      <button class="nav-link" data-tab="history" onclick="snmpTab('history')">
+        <i class="mdi mdi-history me-1"></i>Historia
+      </button>
+    </li>
+  </ul>
+
+  {# ── Treść ── #}
+  <div style="overflow-y:auto;flex:1;">
+
+    {# Placeholder #}
+    <div id="snmp-ph" style="padding:50px;text-align:center;opacity:.4;">
+      <i class="mdi mdi-network-outline" style="font-size:40px;display:block;margin-bottom:10px;"></i>
+      <div style="font-size:.85rem;">Wybierz wersję SNMP i kliknij „Pobierz"<br>lub „Demo" aby zobaczyć przykładowe dane</div>
+    </div>
+
+    {# Loading #}
+    <div id="snmp-loading" style="display:none;padding:50px;text-align:center;">
+      <div class="spinner-border text-info mb-3" role="status"></div>
+      <div id="snmp-loading-msg" style="font-size:.85rem;opacity:.6;"></div>
+    </div>
+
+    {# Error #}
+    <div id="snmp-err" style="display:none;margin:16px;">
+      <div class="alert alert-danger mb-0" id="snmp-err-text"></div>
+    </div>
+
+    {# ── Tab: Porównanie ── #}
+    <div id="tab-compare" class="snmp-tab-pane" style="display:none;">
+      <div id="snmp-statusbar" class="alert mb-0" style="border-radius:0;border-left:none;border-right:none;border-top:none;"></div>
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width:180px;">Pole</th>
+            <th>Wartość z SNMP</th>
+            <th>Wartość w NetBoxie</th>
+            <th style="width:60px;text-align:center;">Sync</th>
+          </tr>
+        </thead>
+        <tbody id="snmp-compare-tbody"></tbody>
+      </table>
+    </div>
+
+    {# ── Tab: Countery ── #}
+    <div id="tab-counters" class="snmp-tab-pane" style="display:none;">
+      <div class="alert alert-secondary mb-0" style="border-radius:0;border-left:none;border-right:none;border-top:none;font-size:.82rem;">
+        Countery 64-bit (ifHCIn/OutOctets gdy dostępne, fallback 32-bit). Wartości od ostatniego restartu urządzenia.
+      </div>
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width:220px;">Counter</th>
+            <th style="text-align:right;">Wartość surowa</th>
+            <th style="text-align:right;">Przeliczone</th>
+          </tr>
+        </thead>
+        <tbody id="snmp-counters-tbody"></tbody>
+      </table>
+    </div>
+
+    {# ── Tab: System ── #}
+    <div id="tab-system" class="snmp-tab-pane" style="display:none;">
+      <table class="table table-hover attr-table mb-0">
+        <tbody id="snmp-system-tbody"></tbody>
+      </table>
+    </div>
+
+    {# ── Tab: Historia ── #}
+    <div id="tab-history" class="snmp-tab-pane" style="display:none;">
+      <table class="table table-hover attr-table mb-0">
+        <tbody id="snmp-history-tbody"></tbody>
+      </table>
+    </div>
+
+  </div>
+
+  {# ── Stopka ── #}
+  <div style="padding:10px 18px;border-top:1px solid var(--nbx-border-color,#2d3748);
+              display:flex;align-items:center;justify-content:space-between;
+              flex-shrink:0;border-radius:0 0 8px 8px;">
+    <div id="snmp-footer-info" style="font-size:.78rem;opacity:.45;"></div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <div id="snmp-sync-result-inline" style="font-size:.82rem;"></div>
+      <button id="snmp-sync-btn" onclick="snmpSync()" class="btn btn-sm btn-success" style="display:none;">
+        <i class="mdi mdi-content-save"></i> Zapisz do NetBoxa
+      </button>
+      <button onclick="snmpClose()" class="btn btn-sm btn-outline-secondary">Zamknij</button>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script>
+(function(){
+if(window._snmpModalReady) return;
+window._snmpModalReady=true;
+
+let _id=null, _data=null, _timer=null;
+
+window.snmpOpenModal=function(id,name){
+  if(!id||id===0){alert('Otwórz konkretny interfejs aby użyć SNMP Inspector.');return;}
+  _id=id;_data=null;
+  document.getElementById('snmp-sub').textContent=name;
+  _show('snmp-ph');
+  _hidePane('snmp-loading','snmp-err');
+  _hideTabs();
+  document.getElementById('snmp-sync-btn').style.display='none';
+  document.getElementById('snmp-sync-result-inline').innerHTML='';
+  document.getElementById('snmp-footer-info').textContent='';
+  document.getElementById('snmp-modal-overlay').style.display='flex';
+  _loadHistoryOnOpen(id);
+};
+
+window.snmpClose=function(){
+  document.getElementById('snmp-modal-overlay').style.display='none';
+  if(_timer){clearInterval(_timer);_timer=null;}
+};
+
+document.getElementById('snmp-modal-overlay').addEventListener('click',function(e){
+  if(e.target===this)snmpClose();
+});
+
+window.snmpTab=function(tab){
+  document.querySelectorAll('#snmp-tabs .nav-link').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab));
+  document.querySelectorAll('.snmp-tab-pane').forEach(d=>d.style.display='none');
+  document.getElementById('tab-'+tab).style.display='block';
+};
+
+function _showTabs(defaultTab){
+  const tabs=document.getElementById('snmp-tabs');
+  tabs.style.display='flex';
+  tabs.style.removeProperty('display');
+  tabs.classList.add('d-flex');
+  snmpTab(defaultTab||'compare');
+}
+
+function _hideTabs(){
+  document.querySelectorAll('.snmp-tab-pane').forEach(d=>d.style.display='none');
+  document.getElementById('snmp-tabs').style.cssText='display:none!important;';
+}
+
+function _hidePane(...ids){ids.forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='none';});}
+
+window.snmpFetch=function(){
+  const ver=document.querySelector('input[name="snmp-ver-radio"]:checked').value;
+  const withCounters=document.getElementById('snmp-counters').checked;
+  const btn=document.getElementById('snmp-fetch-btn');
+  btn.disabled=true;
+  _show('snmp-loading');
+  _hidePane('snmp-ph','snmp-err');
+  _hideTabs();
+  document.getElementById('snmp-sync-btn').style.display='none';
+
+  const msgs=['Łączę z urządzeniem...','Wysyłam SNMP GET-BULK...','Pobieram ifTable + ifXTable...','Pobieram countery 64-bit...','Pobieram dane systemowe...','Porównuję z NetBoxem...'];
+  let mi=0;
+  const mel=document.getElementById('snmp-loading-msg');
+  if(_timer)clearInterval(_timer);
+  _timer=setInterval(()=>{if(mi<msgs.length)mel.textContent=msgs[mi++];},380);
+
+  fetch(`/plugins/snmp/interface/${_id}/fetch/`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':_csrf()},
+    body:JSON.stringify({snmp_version:ver,include_counters:withCounters}),
+  })
+  .then(r=>r.json())
+  .then(d=>{
+    clearInterval(_timer);btn.disabled=false;_hidePane('snmp-loading');
+    if(d.error){
+      const e=document.getElementById('snmp-err');
+      document.getElementById('snmp-err-text').textContent=d.error;
+      _show('snmp-err');return;
+    }
+    _data=d;
+    _renderCompare(d);_renderCounters(d);_renderSystem(d);_renderHistory(d);
+    _showTabs('compare');
+    document.getElementById('snmp-footer-info').textContent=`${d.device_name} · ${d.host} · SNMP${ver.toUpperCase()}`;
+  })
+  .catch(err=>{
+    clearInterval(_timer);btn.disabled=false;_hidePane('snmp-loading');
+    document.getElementById('snmp-err-text').textContent='Błąd połączenia: '+err;
+    _show('snmp-err');
+  });
+};
+
+window.snmpDemo=function(){
+  _hidePane('snmp-ph','snmp-err','snmp-loading');
+  const demoData={
+    interface_id:_id,
+    interface_name:'Ethernet1/1',
+    device_name:'SW-CORE-01',
+    host:'10.121.25.109',
+    snmp_version:'v2c',
+    snmp:{
+      index:'1',name:'Ethernet1/1',description:'Ethernet1/1',label:'Uplink-AGG-01',
+      oper_status:'up',admin_status:'up',speed_mbps:10000,mtu:9216,
+      counters:{
+        in_octets:9823746512,out_octets:7234981234,
+        in_ucast:12847364,out_ucast:9823746,
+        in_errors:0,out_errors:0,in_discards:0,out_discards:2,
+      },
+    },
+    netbox:{
+      id:_id,name:'Ethernet1/1',label:'',description:'uplink-do-AGG',
+      enabled:true,speed:10000000,mtu:null,type:'10gbase-x-sfpp',mac_address:'',
+    },
+    system:{
+      sys_name:'SW-CORE-01.domain.local',
+      sys_descr:'Cisco NX-OS Software, Version 10.3(6)',
+      sys_uptime:'12345678',sys_uptime_human:'14d 6h 56m',
+      sys_contact:'noc@firma.pl',sys_location:'Warsaw-DC1 Rack R04',
+    },
+  };
+  _data=demoData;
+  _renderCompare(demoData);_renderCounters(demoData);_renderSystem(demoData);
+  _renderHistoryStatic();
+  _showTabs('compare');
+  document.getElementById('snmp-footer-info').textContent='SW-CORE-01 · 10.121.25.109 · DEMO';
+};
+
+function _renderHistoryStatic(){
+  const tbody=document.getElementById('snmp-history-tbody');
+  const rows=[
+    ['Ostatnie odpytanie','2026-05-22 11:25 UTC'],
+    ['Przez użytkownika','JFOE'],
+    ['Status','<span class="badge bg-success text-white">ok</span>'],
+    ['sysName','SW-CORE-01.domain.local'],
+    ['Uptime','14d 6h 56m'],
+    ['Interfejsy','↑24 ↓3 /48'],
+    ['Łączna liczba odpytań','8'],
+  ];
+  tbody.innerHTML=rows.map(([k,v])=>`<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}
+
+function _renderCompare(d){
+  const s=d.snmp,nb=d.netbox,tbody=document.getElementById('snmp-compare-tbody');
+  tbody.innerHTML='';
+  if(!s){
+    tbody.innerHTML=`<tr><td colspan="4" class="text-center text-muted py-4">Interfejs <strong>${nb.name}</strong> nie znaleziony w SNMP.</td></tr>`;
+    const sb=document.getElementById('snmp-statusbar');
+    sb.className='alert alert-warning mb-0';sb.style.cssText='border-radius:0;border-left:none;border-right:none;border-top:none;';
+    sb.innerHTML='<i class="mdi mdi-alert me-1"></i>Nie znaleziono interfejsu w danych SNMP';
+    return;
+  }
+  const speedSnmp=s.speed_mbps>=1000?`${s.speed_mbps/1000} Gbps`:s.speed_mbps>0?`${s.speed_mbps} Mbps`:'—';
+  const speedNb=nb.speed?(nb.speed>=1000000?`${nb.speed/1000000} Gbps`:`${nb.speed/1000} Mbps`):'—';
+  const mtuSnmp=s.mtu?String(s.mtu):'—',mtuNb=nb.mtu?String(nb.mtu):'—';
+  const operBadge=s.oper_status==='up'
+    ?'<span class="badge bg-success text-white">▲ up</span>'
+    :'<span class="badge bg-danger text-white">▼ down</span>';
+  const rows=[
+    {f:'Nazwa (ifName)',  k:'name',       sv:s.name,         nv:nb.name,                              sync:false},
+    {f:'Opis (ifDescr)',  k:'description',sv:s.description,  nv:nb.description,                       sync:true},
+    {f:'Label (ifAlias)', k:'label',      sv:s.label,        nv:nb.label,                             sync:true},
+    {f:'Status oper.',    k:'enabled',    svr:operBadge,     sv:s.oper_status,nv:nb.enabled?'enabled':'disabled',sync:true},
+    {f:'Status admin.',   k:null,         sv:s.admin_status, nv:'—',                                  sync:false},
+    {f:'Prędkość',        k:'speed',      sv:speedSnmp,      nv:speedNb,diff:(s.speed_mbps*1000)!==(nb.speed||0),sync:true},
+    {f:'MTU',             k:'mtu',        sv:mtuSnmp,        nv:mtuNb,                                sync:true},
+  ];
+  let anyDiff=false,anySync=false;
+  rows.forEach(row=>{
+    const isDiff=row.diff!==undefined?row.diff:(row.sv||'')!==(row.nv||'');
+    if(isDiff)anyDiff=true;
+    const checked=row.sync&&isDiff;
+    if(checked)anySync=true;
+    const nbHtml=isDiff
+      ?`<span class="text-warning fw-semibold">${_esc(row.nv||'—')}</span>`
+      :`<span class="text-success">${_esc(row.nv||'—')}</span>`;
+    tbody.insertAdjacentHTML('beforeend',`<tr ${isDiff?'style="background:rgba(255,165,0,.08)"':''}>
+      <td class="text-muted">${row.f}</td>
+      <td>${row.svr||_esc(row.sv||'—')}</td>
+      <td>${nbHtml}</td>
+      <td style="text-align:center">${row.sync
+        ?`<input type="checkbox" class="form-check-input" data-key="${row.k}" ${checked?'checked':''} onchange="snmpCheckSync()">`
+        :'<span class="text-muted">—</span>'}</td>
+    </tr>`);
+  });
+  const sb=document.getElementById('snmp-statusbar');
+  if(!anyDiff){
+    sb.className='alert alert-success mb-0';
+    sb.style.cssText='border-radius:0;border-left:none;border-right:none;border-top:none;';
+    sb.innerHTML='<i class="mdi mdi-check-circle me-1"></i>Dane zgodne z NetBoxem';
+  } else {
+    sb.className='alert alert-warning mb-0';
+    sb.style.cssText='border-radius:0;border-left:none;border-right:none;border-top:none;';
+    sb.innerHTML='<i class="mdi mdi-alert me-1"></i>Wykryto różnice między SNMP a NetBoxem';
+  }
+  document.getElementById('snmp-sync-btn').style.display=anySync?'inline-block':'none';
+}
+
+function _fmt(n){
+  if(!n&&n!==0)return'—';
+  if(n>=1e12)return(n/1e12).toFixed(2)+' T';
+  if(n>=1e9)return(n/1e9).toFixed(2)+' G';
+  if(n>=1e6)return(n/1e6).toFixed(2)+' M';
+  if(n>=1e3)return(n/1e3).toFixed(1)+' K';
+  return String(n);
+}
+
+function _renderCounters(d){
+  const tbody=document.getElementById('snmp-counters-tbody');
+  tbody.innerHTML='';
+  if(!d.snmp||!d.snmp.counters){
+    tbody.innerHTML='<tr><td colspan="3" class="text-center text-muted py-4">Countery niedostępne — interfejs nie znaleziony lub nie zaznaczono opcji „Countery".</td></tr>';
+    return;
+  }
+  const c=d.snmp.counters;
+  const defs=[
+    ['In Octets (bajty RX)',  c.in_octets,   _fmt(c.in_octets)+' B'],
+    ['Out Octets (bajty TX)', c.out_octets,  _fmt(c.out_octets)+' B'],
+    ['In Unicast Packets',    c.in_ucast,    _fmt(c.in_ucast)],
+    ['Out Unicast Packets',   c.out_ucast,   _fmt(c.out_ucast)],
+    ['In Errors',             c.in_errors,   c.in_errors>0?`<span class="badge bg-danger text-white">${c.in_errors}</span>`:'<span class="badge bg-success text-white">0</span>'],
+    ['Out Errors',            c.out_errors,  c.out_errors>0?`<span class="badge bg-danger text-white">${c.out_errors}</span>`:'<span class="badge bg-success text-white">0</span>'],
+    ['In Discards',           c.in_discards, c.in_discards>0?`<span class="badge bg-warning text-white">${c.in_discards}</span>`:'<span class="badge bg-success text-white">0</span>'],
+    ['Out Discards',          c.out_discards,c.out_discards>0?`<span class="badge bg-warning text-white">${c.out_discards}</span>`:'<span class="badge bg-success text-white">0</span>'],
+  ];
+  defs.forEach(([label,raw,rendered])=>{
+    tbody.insertAdjacentHTML('beforeend',`<tr>
+      <td class="text-muted">${label}</td>
+      <td style="text-align:right;font-family:monospace;font-size:.82rem;">${raw!==undefined&&raw!==null?raw.toLocaleString():'—'}</td>
+      <td style="text-align:right;">${rendered}</td>
+    </tr>`);
+  });
+}
+
+function _renderSystem(d){
+  const tbody=document.getElementById('snmp-system-tbody');
+  tbody.innerHTML='';
+  const sys=d.system||{};
+  const rows=[
+    ['sysName',     sys.sys_name],
+    ['sysDescr',    sys.sys_descr],
+    ['Uptime',      sys.sys_uptime_human||sys.sys_uptime],
+    ['sysContact',  sys.sys_contact],
+    ['sysLocation', sys.sys_location],
+  ];
+  rows.forEach(([k,v])=>{
+    tbody.insertAdjacentHTML('beforeend',`<tr><td class="text-muted">${k}</td><td>${_esc(v||'—')}</td></tr>`);
+  });
+}
+
+function _renderHistory(d){
+  const tbody=document.getElementById('snmp-history-tbody');
+  tbody.innerHTML='<tr><td colspan="2" class="text-center text-muted py-3">Ładowanie...</td></tr>';
+  fetch(`/plugins/snmp/device/${_encodeDeviceId(d)}/history/`)
+  .then(r=>r.json())
+  .then(h=>_fillHistory(tbody,h))
+  .catch(()=>{tbody.innerHTML='<tr><td colspan="2" class="text-danger p-3">Błąd ładowania historii</td></tr>';});
+}
+
+function _loadHistoryOnOpen(ifaceId){
+  document.getElementById('snmp-tabs').style.cssText='';
+  document.getElementById('snmp-tabs').style.removeProperty('display');
+  document.querySelectorAll('#snmp-tabs .nav-link').forEach(b=>b.classList.toggle('active',b.dataset.tab==='history'));
+  document.querySelectorAll('.snmp-tab-pane').forEach(d=>d.style.display='none');
+  document.getElementById('tab-history').style.display='block';
+  _hidePane('snmp-ph');
+  const tbody=document.getElementById('snmp-history-tbody');
+  tbody.innerHTML='<tr><td colspan="2" class="text-center text-muted py-3">Ładowanie historii...</td></tr>';
+  fetch(`/plugins/snmp/interface/${ifaceId}/history-by-interface/`)
+  .then(r=>r.json())
+  .then(h=>_fillHistory(tbody,h))
+  .catch(()=>{tbody.innerHTML='<tr><td colspan="2" class="text-danger p-3">Błąd ładowania historii</td></tr>';});
+}
+
+function _fillHistory(tbody,h){
+  const rows=[
+    ['Ostatnie odpytanie', h.last_fetch||'—'],
+    ['Przez użytkownika',  h.last_fetch_by||'—'],
+    ['Status',             h.last_fetch_status==='ok'
+      ?'<span class="badge bg-success text-white">ok</span>'
+      :h.last_fetch_status
+        ?`<span class="badge bg-danger text-white">${_esc(h.last_fetch_status)}</span>`
+        :'—'],
+    ['sysName',            h.sys_name||'—'],
+    ['Uptime',             h.sys_uptime||'—'],
+    ['Interfejsy',         h.iface_summary||'—'],
+    ['Łączna liczba odpytań', String(h.fetch_count||0)],
+  ];
+  tbody.innerHTML=rows.map(([k,v])=>`<tr><td class="text-muted">${k}</td><td>${v}</td></tr>`).join('');
+}
+
+function _encodeDeviceId(d){
+  if(d&&d.device_id)return d.device_id;
+  const m=window.location.pathname.match(/\/dcim\/interfaces\/(\d+)\//);
+  return m?m[1]:0;
+}
+
+window.snmpCheckSync=function(){
+  const any=Array.from(document.querySelectorAll('#snmp-compare-tbody input[type=checkbox]')).some(cb=>cb.checked);
+  document.getElementById('snmp-sync-btn').style.display=any?'inline-block':'none';
+};
+
+window.snmpSync=function(){
+  if(!_data||!_data.snmp)return;
+  const btn=document.getElementById('snmp-sync-btn');
+  btn.disabled=true;btn.innerHTML='<i class="mdi mdi-loading mdi-spin"></i> Zapisuję...';
+  const fields=Array.from(document.querySelectorAll('#snmp-compare-tbody input[type=checkbox]:checked')).map(cb=>cb.dataset.key);
+  fetch(`/plugins/snmp/interface/${_id}/sync/`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':_csrf()},
+    body:JSON.stringify({snmp:_data.snmp,fields}),
+  })
+  .then(r=>r.json())
+  .then(res=>{
+    btn.disabled=false;btn.innerHTML='<i class="mdi mdi-content-save"></i> Zapisz do NetBoxa';
+    const el=document.getElementById('snmp-sync-result-inline');
+    if(res.error){el.innerHTML=`<span class="text-danger">✗ ${_esc(res.error)}</span>`;}
+    else{el.innerHTML=`<span class="text-success">✓ Zaktualizowano: ${res.updated.join(', ')}</span>`;}
+  })
+  .catch(()=>{btn.disabled=false;btn.innerHTML='<i class="mdi mdi-content-save"></i> Zapisz do NetBoxa';});
+};
+
+function _show(...ids){ids.forEach(id=>{const el=document.getElementById(id);if(el)el.style.display='block';});}
+function _csrf(){
+  const meta=document.querySelector('meta[name="csrf-token"]');if(meta)return meta.getAttribute('content');
+  const input=document.querySelector('input[name="csrfmiddlewaretoken"]');if(input)return input.value;
+  const c=document.cookie.split(';').find(x=>x.trim().startsWith('csrftoken='));return c?c.split('=')[1].trim():'';
+}
+function _esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+window.snmpGetCsrf=_csrf;
+})();
+</script>
+
+{% endwith %}
+{% endif %}

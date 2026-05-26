@@ -1,0 +1,11 @@
+{% with next_order=order|yesno:"asc,desc" %}
+<a href="javascript:void(0)"
+   onclick="sortBy('{{ field }}', '{% if sort == field %}{{ next_order }}{% else %}asc{% endif %}')"
+   class="text-body text-decoration-none">
+  {{ label }}
+  {% if sort == field %}
+    {% if order == "asc" %}<i class="mdi mdi-chevron-up"></i>
+    {% else %}<i class="mdi mdi-chevron-down"></i>{% endif %}
+  {% endif %}
+</a>
+{% endwith %}

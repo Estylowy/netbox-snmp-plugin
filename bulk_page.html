@@ -1,0 +1,374 @@
+{% extends 'base/layout.html' %}
+{% load helpers %}
+
+{% block title %}Odpytaj urządzenia SNMP{% endblock %}
+
+{% block content %}
+<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h2 mb-3">
+    <i class="mdi mdi-radar text-info"></i> Odpytaj urządzenia SNMP
+  </h1>
+</div>
+
+{# ── Panel filtrów ── #}
+<div class="card mb-3">
+  <div class="card-header">
+    <strong><i class="mdi mdi-filter-outline"></i> Filtry</strong>
+  </div>
+  <div class="card-body">
+    <form method="get" id="filter-form">
+      <div class="row g-2">
+        <div class="col-md-3">
+          <label class="form-label">Szukaj</label>
+          <input type="text" name="q" class="form-control form-control-sm"
+                 placeholder="Nazwa urządzenia..." value="{{ filter_q }}">
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Site</label>
+          <select name="site" class="form-select form-select-sm">
+            <option value="">-- Wszystkie --</option>
+            {% for site in sites %}
+            <option value="{{ site.pk }}" {% if filter_site == site.pk|stringformat:"s" %}selected{% endif %}>
+              {{ site.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Rola</label>
+          <select name="role" class="form-select form-select-sm">
+            <option value="">-- Wszystkie --</option>
+            {% for role in roles %}
+            <option value="{{ role.pk }}" {% if filter_role == role.pk|stringformat:"s" %}selected{% endif %}>
+              {{ role.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Status</label>
+          <select name="status" class="form-select form-select-sm">
+            <option value="">-- Wszystkie --</option>
+            {% for val, label in status_choices %}
+            <option value="{{ val }}" {% if filter_status == val %}selected{% endif %}>
+              {{ label }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-2">
+          <label class="form-label">Właściciel</label>
+          <select name="owner" class="form-select form-select-sm">
+            <option value="">-- Wszystkie --</option>
+            {% for tid, tname in tenants %}
+            <option value="{{ tid }}" {% if filter_owner == tid|stringformat:"s" %}selected{% endif %}>
+              {{ tname }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="col-md-1">
+          <label class="form-label">Tag</label>
+          <select name="tag" class="form-select form-select-sm">
+            <option value="">-- Wszystkie --</option>
+            {% for tag in tags %}
+            <option value="{{ tag.slug }}" {% if filter_tag == tag.slug %}selected{% endif %}>
+              {{ tag.name }}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="row g-2 mt-1">
+        <div class="col-12 d-flex align-items-center gap-2">
+          <button type="submit" class="btn btn-sm btn-primary">
+            <i class="mdi mdi-filter"></i> Filtruj
+          </button>
+          <a href="{% url 'plugins:netbox_snmp_plugin:snmp_bulk_page' %}" class="btn btn-sm btn-outline-secondary">
+            <i class="mdi mdi-filter-off"></i> Wyczyść
+          </a>
+          <span class="text-muted ms-2" style="font-size:.85rem;">
+            Znaleziono: <strong>{{ total_count }}</strong> urządzeń
+          </span>
+        </div>
+      </div>
+      {# Zachowaj sort/order przy filtrowaniu #}
+      <input type="hidden" name="sort" value="{{ sort }}">
+      <input type="hidden" name="order" value="{{ order }}">
+      <input type="hidden" name="per_page" value="{{ per_page }}">
+    </form>
+  </div>
+</div>
+
+{# ── Toolbar akcji ── #}
+<div class="card">
+  <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+    <div class="d-flex align-items-center gap-2">
+      <select id="snmp-ver-bulk" class="form-select form-select-sm" style="width:auto;">
+        <option value="v2c">SNMPv2c</option>
+        <option value="v3">SNMPv3</option>
+      </select>
+      <button id="bulk-fetch-btn" onclick="bulkFetch()" class="btn btn-sm btn-primary">
+        <i class="mdi mdi-download-network"></i> Odpytaj zaznaczone
+      </button>
+      <div id="bulk-progress-wrap" style="display:none!important;" class="d-flex align-items-center gap-2">
+        <span id="bulk-progress-msg" class="text-muted" style="font-size:.85rem;"></span>
+      </div>
+    </div>
+    <div class="d-flex align-items-center gap-2">
+      <label class="form-label mb-0 text-muted" style="font-size:.85rem;">Na stronie:</label>
+      <select id="per-page-select" class="form-select form-select-sm" style="width:auto;"
+              onchange="changePerPage(this.value)">
+        {% for choice in per_page_choices %}
+        <option value="{{ choice }}" {% if per_page == choice %}selected{% endif %}>{{ choice }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  {# ── Tabela ── #}
+  <div class="table-responsive">
+    <table class="table table-hover table-headings">
+      <thead>
+        <tr>
+          <th style="width:36px;">
+            <input type="checkbox" id="select-all" onchange="selectAll(this)"
+                   class="form-check-input">
+          </th>
+          <th>{% include 'netbox_snmp_plugin/bulk/sort_header.html' with field="name" label="Urządzenie" %}</th>
+          <th>{% include 'netbox_snmp_plugin/bulk/sort_header.html' with field="site" label="Site" %}</th>
+          <th>{% include 'netbox_snmp_plugin/bulk/sort_header.html' with field="role" label="Rola" %}</th>
+          <th>{% include 'netbox_snmp_plugin/bulk/sort_header.html' with field="status" label="Status" %}</th>
+          <th>Primary IP</th>
+          <th>Ostatnie SNMP</th>
+          <th style="text-align:center;">SNMP Status</th>
+          <th>Wynik odpytania</th>
+        </tr>
+      </thead>
+      <tbody id="bulk-tbody">
+        {% for device in page_obj %}
+        <tr id="row-{{ device.pk }}"
+            class="">
+          <td>
+            {% if device.primary_ip4 %}
+            <input type="checkbox" class="form-check-input bulk-check" value="{{ device.pk }}">
+            {% else %}
+            <input type="checkbox" class="form-check-input" disabled title="Brak Primary IP">
+            {% endif %}
+          </td>
+          <td>
+            <a href="/dcim/devices/{{ device.pk }}/">{{ device.name }}</a>
+          </td>
+          <td>
+            {% if device.site %}
+            <a href="/dcim/sites/{{ device.site.slug }}/">{{ device.site.name }}</a>
+            {% else %}—{% endif %}
+          </td>
+          <td>{{ device.role.name|default:"—" }}</td>
+          <td>
+            {% if device.status == "active" %}
+              <span class="badge bg-success" style="color:#ffffff!important;">Active</span>
+            {% elif device.status == "planned" %}
+              <span class="badge bg-info">Planned</span>
+            {% elif device.status == "staged" %}
+              <span class="badge bg-primary">Staged</span>
+            {% elif device.status == "failed" %}
+              <span class="badge bg-danger">Failed</span>
+            {% elif device.status == "decommissioning" %}
+              <span class="badge bg-warning">Decommissioning</span>
+            {% else %}
+              <span class="badge bg-danger text-white">{{ device.status }}</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if device.primary_ip4 %}
+              <code>{{ device.primary_ip4.address.ip }}</code>
+            {% else %}
+              <span class="text-muted fst-italic">brak IP</span>
+            {% endif %}
+          </td>
+          <td style="font-size:.82rem;" class="text-muted">
+            {% with cf=device.custom_field_data %}
+              {{ cf.snmp_last_fetch|default:"—" }}
+            {% endwith %}
+          </td>
+          <td style="text-align:center;" id="status-{{ device.pk }}">
+            {% with cf=device.custom_field_data %}
+              {% if cf.snmp_last_fetch_status == "ok" %}
+                <span class="badge bg-success" style="color:#fff!important;">ok</span>
+              {% elif cf.snmp_last_fetch_status %}
+                <span class="badge bg-danger">error</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            {% endwith %}
+          </td>
+          <td id="result-{{ device.pk }}" style="font-size:.82rem;">
+            <span class="text-muted">—</span>
+          </td>
+        </tr>
+        {% empty %}
+        <tr>
+          <td colspan="9" class="text-center text-muted py-4">
+            Brak urządzeń spełniających kryteria filtrów.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+{# ── Paginacja ── #}
+  {% if paginator.num_pages > 1 %}
+  <div class="card-footer d-flex align-items-center justify-content-between">
+    <div class="text-muted" style="font-size:.85rem;">
+      Strona {{ page_obj.number }} z {{ paginator.num_pages }}
+      ({{ total_count }} urządzeń łącznie)
+    </div>
+    <nav>
+      <ul class="pagination pagination-sm mb-0">
+        {% if page_obj.has_previous %}
+        <li class="page-item">
+          <a class="page-link" href="javascript:void(0)" onclick="goToPage(1)">«</a>
+        </li>
+        <li class="page-item">
+          <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ page_obj.previous_page_number }})">‹</a>
+        </li>
+        {% else %}
+        <li class="page-item disabled"><span class="page-link">«</span></li>
+        <li class="page-item disabled"><span class="page-link">‹</span></li>
+        {% endif %}
+        {% for num in paginator.page_range %}
+          {% if page_obj.number == num %}
+          <li class="page-item active"><span class="page-link">{{ num }}</span></li>
+          {% elif num > page_obj.number|add:"-3" and num < page_obj.number|add:"3" %}
+          <li class="page-item">
+            <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ num }})">{{ num }}</a>
+          </li>
+          {% endif %}
+        {% endfor %}
+        {% if page_obj.has_next %}
+        <li class="page-item">
+          <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ page_obj.next_page_number }})">›</a>
+        </li>
+        <li class="page-item">
+          <a class="page-link" href="javascript:void(0)" onclick="goToPage({{ paginator.num_pages }})">»</a>
+        </li>
+        {% else %}
+        <li class="page-item disabled"><span class="page-link">›</span></li>
+        <li class="page-item disabled"><span class="page-link">»</span></li>
+        {% endif %}
+      </ul>
+    </nav>
+  </div>
+  {% endif %}
+
+</div>{# /card #}
+
+<script>
+function selectAll(cb){
+  document.querySelectorAll('.bulk-check').forEach(c=>c.checked=cb.checked);
+}
+
+function changePerPage(val){
+  const url = new URL(window.location.href);
+  url.searchParams.set('per_page', val);
+  url.searchParams.set('page', 1);
+  window.location.href = url.toString();
+}
+
+function bulkFetch(){
+  const ver = document.getElementById('snmp-ver-bulk').value;
+  const ids  = Array.from(document.querySelectorAll('.bulk-check:checked')).map(cb=>parseInt(cb.value));
+  if(!ids.length){ alert('Zaznacz urządzenia do odpytania.'); return; }
+
+  const btn  = document.getElementById('bulk-fetch-btn');
+  const wrap = document.getElementById('bulk-progress-wrap');
+  const msg  = document.getElementById('bulk-progress-msg');
+  btn.disabled = true;
+  wrap.style.display = 'flex';
+  msg.textContent = `Odpytuję ${ids.length} urządzeń...`;
+
+  ids.forEach(id=>{
+    const r = document.getElementById('result-'+id);
+    const s = document.getElementById('status-'+id);
+    if(r) r.innerHTML = '<span class="text-muted">⏳ czekam...</span>';
+    if(s) s.innerHTML = '<span class="text-muted">…</span>';
+  });
+
+  fetch('{% url "plugins:netbox_snmp_plugin:snmp_bulk_fetch" %}', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-CSRFToken': (function(){const m=document.querySelector('meta[name="csrf-token"]');if(m)return m.getAttribute('content');const i=document.querySelector('input[name="csrfmiddlewaretoken"]');if(i)return i.value;const c=document.cookie.split(';').find(x=>x.trim().startsWith('csrftoken='));return c?c.split('=')[1].trim():'';})(),
+    },
+    body: JSON.stringify({device_ids: ids, snmp_version: ver}),
+  })
+  .then(r=>r.json())
+  .then(data=>{
+    btn.disabled = false;
+    wrap.style.display = 'none';
+    msg.textContent = '✓ Zakończono';
+
+    data.results.forEach(r=>{
+      const st = document.getElementById('status-'+r.device_id);
+      const el = document.getElementById('result-'+r.device_id);
+      if(!el||!st) return;
+
+      if(r.status==='ok'){
+        const sys = r.system||{};
+        st.innerHTML = '<span class="badge bg-success" style="color:#fff!important;">ok</span>';
+        el.innerHTML = `
+          <span class="fw-semibold">${_esc(sys.sys_name||r.device_name)}</span>
+          <span class="text-muted ms-2">uptime: ${_esc(sys.sys_uptime_human||'—')}</span>
+          <span class="ms-2">
+            <span class="badge bg-success" style="color:#fff!important;">↑${r.iface_up}</span>
+            <span class="badge bg-danger text-white">↓${r.iface_down}</span>
+            <span class="badge bg-info text-white">${r.iface_total}</span>
+          </span>`;
+      } else {
+        st.innerHTML = '<span class="badge bg-danger">error</span>';
+        el.innerHTML = `<span class="text-danger">${_esc(r.error||'błąd')}</span>`;
+      }
+    });
+  })
+  .catch(err=>{
+    btn.disabled = false;
+    wrap.style.display = 'none';
+    msg.textContent = '✗ Błąd';
+    alert('Błąd: '+err);
+  });
+}
+
+function _csrf(){
+  const meta=document.querySelector('meta[name="csrf-token"]');
+  if(meta) return meta.getAttribute('content');
+  const input=document.querySelector('input[name="csrfmiddlewaretoken"]');
+  if(input) return input.value;
+  const c=document.cookie.split(';').find(x=>x.trim().startsWith('csrftoken='));
+  return c?c.split('=')[1].trim():'';
+}
+function _esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+</script>
+{% endblock %}
+<script>
+function goToPage(num){
+  const url=new URL(window.location.href);
+  url.searchParams.set('page',num);
+  window.location.href=url.toString();
+}
+function sortBy(field,order){
+  const url=new URL(window.location.href);
+  url.searchParams.set('sort',field);
+  url.searchParams.set('order',order);
+  url.searchParams.set('page',1);
+  window.location.href=url.toString();
+}
+function changePerPage(val){
+  const url=new URL(window.location.href);
+  url.searchParams.set('per_page',val);
+  url.searchParams.set('page',1);
+  window.location.href=url.toString();
+}
+</script>

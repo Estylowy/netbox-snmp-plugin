@@ -1,0 +1,299 @@
+<button type="button"
+        class="btn btn-sm btn-success"
+        onclick="snmpSysInfoOpen({{ device.pk }}, '{{ device.name|escapejs }}')"
+        title="SNMP — pobierz dane systemowe urządzenia">
+  <i class="mdi mdi-server"></i> SNMP Device
+</button>
+
+{% if not snmp_sysinfo_modal_rendered %}
+{% with snmp_sysinfo_modal_rendered=True %}
+<input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
+
+<div id="snmp-sys-overlay"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);
+            z-index:9999;align-items:center;justify-content:center;">
+<div id="snmp-sys-modal"
+     style="background:var(--nbx-body-bg,#1a1e24);border:1px solid var(--nbx-border-color,#2d3748);
+            border-radius:8px;width:800px;max-width:96vw;max-height:90vh;
+            display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.5);position:relative;">
+
+  <div style="padding:12px 18px;border-bottom:1px solid var(--nbx-border-color,#2d3748);
+              display:flex;align-items:center;justify-content:space-between;flex-shrink:0;cursor:move;"
+       id="snmp-sys-header">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <i class="mdi mdi-server text-success" style="font-size:22px;"></i>
+      <div>
+        <div style="font-weight:600;font-size:.95rem;">SNMP Device Info</div>
+        <div id="snmp-sys-sub" style="font-size:.78rem;opacity:.55;">—</div>
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <div class="btn-group btn-group-sm">
+        <input type="radio" class="btn-check" name="snmp-sys-ver" id="snmp-sys-v2c" value="v2c" checked>
+        <label class="btn btn-outline-info" for="snmp-sys-v2c">v2c</label>
+        <input type="radio" class="btn-check" name="snmp-sys-ver" id="snmp-sys-v3" value="v3">
+        <label class="btn btn-outline-info" for="snmp-sys-v3">v3</label>
+      </div>
+      <button onclick="snmpSysFetch()" class="btn btn-sm btn-success" id="snmp-sys-fetch-btn">
+        <i class="mdi mdi-download-network"></i> Pobierz
+      </button>
+      <button onclick="snmpSysClose()" class="btn btn-sm btn-ghost-secondary">
+        <i class="mdi mdi-close"></i>
+      </button>
+    </div>
+  </div>
+
+  <div style="overflow-y:auto;flex:1;">
+    <div id="snmp-sys-ph" style="padding:40px;text-align:center;opacity:.4;">
+      <i class="mdi mdi-server-network" style="font-size:40px;display:block;margin-bottom:10px;"></i>
+      <div style="font-size:.85rem;">Wybierz wersję SNMP i kliknij „Pobierz"</div>
+    </div>
+    <div id="snmp-sys-loading" style="display:none;padding:40px;text-align:center;">
+      <div class="spinner-border text-success mb-3" role="status"></div>
+      <div class="text-secondary small">Pobieranie danych systemowych...</div>
+    </div>
+    <div id="snmp-sys-error" style="display:none;margin:16px;">
+      <div class="alert alert-danger mb-0" id="snmp-sys-error-text"></div>
+    </div>
+    <div id="snmp-sys-results" style="display:none;">
+      <div id="snmp-sys-statusbar" class="alert mb-0"
+           style="border-radius:0;border-left:none;border-right:none;border-top:none;"></div>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0" style="table-layout:fixed;width:100%;">
+          <colgroup><col style="width:160px;"><col><col><col style="width:50px;"></colgroup>
+          <thead>
+            <tr>
+              <th>Pole</th>
+              <th>Wartość SNMP</th>
+              <th>Wartość NetBox</th>
+              <th style="text-align:center;">Sync</th>
+            </tr>
+          </thead>
+          <tbody id="snmp-sys-tbody"></tbody>
+        </table>
+      </div>
+      <div id="snmp-sys-sync-wrap" class="px-3 py-2 border-top d-flex justify-content-between align-items-center" style="display:none!important;">
+        <div id="snmp-sys-sync-result" class="small text-success"></div>
+        <button id="snmp-sys-sync-btn" onclick="snmpSysSync()" class="btn btn-sm btn-success">
+          <i class="mdi mdi-content-save"></i> Synchronizuj zaznaczone
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div style="padding:10px 18px;border-top:1px solid var(--nbx-border-color,#2d3748);
+              display:flex;align-items:center;justify-content:space-between;flex-shrink:0;">
+    <div id="snmp-sys-footer" style="font-size:.78rem;opacity:.45;"></div>
+    <button onclick="snmpSysClose()" class="btn btn-sm btn-outline-secondary">Zamknij</button>
+  </div>
+
+  <div id="snmp-sys-resize"
+       style="position:absolute;bottom:0;right:0;width:16px;height:16px;cursor:se-resize;
+              background:linear-gradient(135deg,transparent 50%,rgba(255,255,255,.2) 50%);"></div>
+</div>
+</div>
+
+<script>
+(function(){
+if(window._snmpSysReady) return;
+window._snmpSysReady = true;
+
+let _sysDevId=null, _sysDevName=null, _sysData={}, _nbData={};
+
+window.snmpSysInfoOpen = function(id, name){
+  _sysDevId=id; _sysDevName=name;
+  document.getElementById('snmp-sys-sub').textContent=name;
+  document.getElementById('snmp-sys-ph').style.display='block';
+  document.getElementById('snmp-sys-loading').style.display='none';
+  document.getElementById('snmp-sys-error').style.display='none';
+  document.getElementById('snmp-sys-results').style.display='none';
+  document.getElementById('snmp-sys-sync-wrap').style.cssText='display:none!important;';
+  document.getElementById('snmp-sys-footer').textContent='';
+  document.getElementById('snmp-sys-overlay').style.display='flex';
+};
+
+window.snmpSysClose=function(){
+  document.getElementById('snmp-sys-overlay').style.display='none';
+};
+
+document.getElementById('snmp-sys-overlay').addEventListener('click',function(e){
+  if(e.target===this) snmpSysClose();
+});
+
+window.snmpSysFetch=function(){
+  const ver=document.querySelector('input[name="snmp-sys-ver"]:checked').value;
+  const btn=document.getElementById('snmp-sys-fetch-btn');
+  btn.disabled=true;
+  document.getElementById('snmp-sys-ph').style.display='none';
+  document.getElementById('snmp-sys-results').style.display='none';
+  document.getElementById('snmp-sys-error').style.display='none';
+  document.getElementById('snmp-sys-loading').style.display='block';
+
+  Promise.all([
+    fetch(`/plugins/snmp/device/${_sysDevId}/fetch-interfaces/`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRFToken':_sysCsrf()},
+      body:JSON.stringify({snmp_version:ver,include_counters:false}),
+    }).then(r=>r.json()),
+    fetch(`/api/dcim/devices/${_sysDevId}/`).then(r=>r.json()),
+  ])
+  .then(([snmpData, nbDevice])=>{
+    btn.disabled=false;
+    document.getElementById('snmp-sys-loading').style.display='none';
+    if(snmpData.error){
+      document.getElementById('snmp-sys-error-text').textContent=snmpData.error;
+      document.getElementById('snmp-sys-error').style.display='block';
+      return;
+    }
+    _sysData=snmpData.system||{};
+    _nbData=nbDevice;
+    _renderSysTable(_sysData, nbDevice, snmpData.interfaces||[]);
+    document.getElementById('snmp-sys-results').style.display='block';
+    document.getElementById('snmp-sys-footer').textContent=`${snmpData.device_name} · ${snmpData.host} · SNMP${ver.toUpperCase()}`;
+  })
+  .catch(err=>{
+    btn.disabled=false;
+    document.getElementById('snmp-sys-loading').style.display='none';
+    document.getElementById('snmp-sys-error-text').textContent='Błąd: '+err;
+    document.getElementById('snmp-sys-error').style.display='block';
+  });
+};
+
+function _renderSysTable(sys, nb, ifaces){
+  // Wyciągnij wersję OS z sysDescr
+  const osMatch = (sys.sys_descr||'').match(/Version\s+([\d.]+\s*\([^)]+\))/i);
+  const osFromSnmp = osMatch ? osMatch[1] : '';
+  const nbOs = (nb.custom_fields&&nb.custom_fields.os)||'';
+
+  const upTotal = ifaces.filter(i=>i.snmp&&i.snmp.oper_status==='up').length;
+  const downTotal = ifaces.filter(i=>i.snmp&&i.snmp.oper_status==='down').length;
+
+  const rows = [
+    {k:'sys_name',  label:'sysName',      sv:sys.sys_name||'—',             nv:nb.name||'—',          field:'cf_snmp_sys_name', canSync:true},
+    {k:'sys_descr', label:'sysDescr',     sv:sys.sys_descr||'—',            nv:(nb.custom_fields&&nb.custom_fields.snmp_sys_descr)||'—',    field:'cf_snmp_sys_descr',    canSync:true},
+    {k:'uptime',    label:'Uptime',       sv:sys.sys_uptime_human||'—',      nv:(nb.custom_fields&&nb.custom_fields.snmp_sys_uptime)||'—',   field:'cf_snmp_sys_uptime',   canSync:true},
+    {k:'contact',   label:'sysContact',   sv:sys.sys_contact||'—',          nv:(nb.custom_fields&&nb.custom_fields.snmp_sys_contact)||'—',  field:'cf_snmp_sys_contact',  canSync:true},
+    {k:'location',  label:'sysLocation',  sv:sys.sys_location||'—',         nv:(nb.custom_fields&&nb.custom_fields.snmp_sys_location)||'—', field:'cf_snmp_sys_location', canSync:true},
+    {k:'os',        label:'Wersja OS',    sv:osFromSnmp||sys.sys_descr||'—', nv:nbOs||'—',             field:'cf_os',          canSync:!!osFromSnmp},
+    {k:'serial',    label:'Serial',       sv:'—',                           nv:nb.serial||'—',        field:null,             canSync:false},
+    {k:'ifaces',    label:'Interfejsy',   sv:`↑${upTotal} ↓${downTotal} /${ifaces.length}`, nv:'—', field:null,             canSync:false},
+  ];
+
+  let diffs=0;
+  const tbody=document.getElementById('snmp-sys-tbody');
+  tbody.innerHTML=rows.map((row,idx)=>{
+    const isDiff=row.canSync && row.sv!=='—' && row.nv!==row.sv;
+    if(isDiff) diffs++;
+    const nbCls=isDiff?'text-warning fw-semibold':'';
+    const sync=row.canSync?`<input type="checkbox" class="form-check-input snmp-sys-check"
+      data-key="${row.k}" data-field="${row.field||''}" data-sv="${_sesc(row.sv)}" ${isDiff?'checked':''}>`:'';
+    return `<tr>
+      <td class="text-muted" style="white-space:nowrap;">${row.label}</td>
+      <td style="word-break:break-word;">${_sesc(row.sv)}</td>
+      <td class="${nbCls}" style="word-break:break-word;">${_sesc(row.nv)}</td>
+      <td style="text-align:center;">${sync}</td>
+    </tr>`;
+  }).join('');
+
+  const sb=document.getElementById('snmp-sys-statusbar');
+  if(!diffs){
+    sb.className='alert alert-success mb-0';
+    sb.style.cssText='border-radius:0;border-left:none;border-right:none;border-top:none;';
+    sb.innerHTML='<i class="mdi mdi-check-circle me-1"></i>Dane zgodne z NetBoxem';
+  } else {
+    sb.className='alert alert-warning mb-0';
+    sb.style.cssText='border-radius:0;border-left:none;border-right:none;border-top:none;';
+    sb.innerHTML=`<i class="mdi mdi-alert me-1"></i>Wykryto <strong>${diffs}</strong> różnic`;
+  }
+
+  // Pokaż przycisk sync jeśli są checkboxy
+  document.getElementById('snmp-sys-sync-wrap').style.cssText='';
+  _sysSyncBtnUpdate();
+
+  document.querySelectorAll('.snmp-sys-check').forEach(cb=>{
+    cb.addEventListener('change', _sysSyncBtnUpdate);
+  });
+}
+
+function _sysSyncBtnUpdate(){
+  const any=document.querySelectorAll('.snmp-sys-check:checked').length>0;
+  document.getElementById('snmp-sys-sync-btn').style.display=any?'':'none';
+}
+
+window.snmpSysSync=function(){
+  const btn=document.getElementById('snmp-sys-sync-btn');
+  btn.disabled=true; btn.textContent='Synchronizuję...';
+
+  const payload={fields:{}};
+  document.querySelectorAll('.snmp-sys-check:checked').forEach(cb=>{
+    payload.fields[cb.dataset.field]=cb.dataset.sv;
+  });
+
+  fetch(`/plugins/snmp/device/${_sysDevId}/sync-device/`,{
+    method:'POST',
+    headers:{'Content-Type':'application/json','X-CSRFToken':_sysCsrf()},
+    body:JSON.stringify(payload),
+  })
+  .then(r=>r.json())
+  .then(res=>{
+    btn.disabled=false;
+    btn.innerHTML='<i class="mdi mdi-content-save"></i> Synchronizuj zaznaczone';
+    const el=document.getElementById('snmp-sys-sync-result');
+    if(res.status==='ok'){
+      el.textContent='✓ Zapisano pomyślnie';
+      el.className='small text-success';
+    } else {
+      el.textContent='✗ '+( res.error||'Błąd');
+      el.className='small text-danger';
+    }
+  })
+  .catch(()=>{
+    btn.disabled=false;
+    btn.innerHTML='<i class="mdi mdi-content-save"></i> Synchronizuj zaznaczone';
+  });
+};
+
+// Resize
+(function(){
+  const modal=document.getElementById('snmp-sys-modal');
+  const handle=document.getElementById('snmp-sys-resize');
+  if(!modal||!handle) return;
+  let resizing=false,startX,startY,startW,startH;
+  handle.addEventListener('mousedown',function(e){
+    e.preventDefault();e.stopPropagation();
+    resizing=true;startX=e.clientX;startY=e.clientY;
+    startW=modal.offsetWidth;startH=modal.offsetHeight;
+    const ov=document.getElementById('snmp-sys-overlay');
+    ov.style.pointerEvents='none';
+    document.addEventListener('mousemove',onR);
+    document.addEventListener('mouseup',()=>{resizing=false;ov.style.pointerEvents='';document.removeEventListener('mousemove',onR);});
+  });
+  function onR(e){if(!resizing)return;modal.style.width=Math.max(400,startW+e.clientX-startX)+'px';modal.style.height=Math.max(300,startH+e.clientY-startY)+'px';modal.style.maxWidth='none';modal.style.maxHeight='none';}
+  // Drag
+  const hdr=document.getElementById('snmp-sys-header');
+  if(!hdr) return;
+  let dragging=false,dx,dy;
+  hdr.addEventListener('mousedown',function(e){
+    if(e.target.closest('button')||e.target.closest('input')||e.target.closest('label')) return;
+    dragging=true;
+    const ov=document.getElementById('snmp-sys-overlay');
+    const rect=modal.getBoundingClientRect();
+    dx=e.clientX-rect.left;dy=e.clientY-rect.top;
+    ov.style.pointerEvents='none';
+    document.addEventListener('mousemove',onD);
+    document.addEventListener('mouseup',()=>{dragging=false;ov.style.pointerEvents='';document.removeEventListener('mousemove',onD);});
+  });
+  function onD(e){if(!dragging)return;modal.style.position='fixed';modal.style.left=(e.clientX-dx)+'px';modal.style.top=(e.clientY-dy)+'px';modal.style.margin='0';}
+})();
+
+function _sysCsrf(){
+  const m=document.querySelector('meta[name="csrf-token"]');if(m)return m.getAttribute('content');
+  const i=document.querySelector('input[name="csrfmiddlewaretoken"]');if(i)return i.value;
+  const c=document.cookie.split(';').find(x=>x.trim().startsWith('csrftoken='));return c?c.split('=')[1].trim():'';
+}
+function _sesc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+})();
+</script>
+
+{% endwith %}
+{% endif %}

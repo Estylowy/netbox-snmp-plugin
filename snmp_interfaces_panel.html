@@ -1,0 +1,266 @@
+<script>
+(function(){
+  function injectBtn(){
+    const toolbar = document.querySelector('.bulk-select-controls, .bulk-operations, [class*="bulk"]');
+    if(document.getElementById('snmp-inject-btn')) return;
+    const target = document.querySelector('.object-list .table-container, #object-list');
+    if(!target) return;
+    const btn = document.createElement('button');
+    btn.id = 'snmp-inject-btn';
+    btn.className = 'btn btn-sm';
+    btn.style.cssText = 'background:#0077aa;color:#fff;border:none;margin-bottom:8px;';
+    btn.innerHTML = '<i class="mdi mdi-radar"></i> SNMP Inspector';
+    btn.onclick = function(){ document.getElementById("snmp-ifaces-card").scrollIntoView({behavior:"smooth"}); };
+    target.parentNode.insertBefore(btn, target);
+  }
+  if(document.readyState === 'loading'){
+    document.addEventListener('DOMContentLoaded', injectBtn);
+  } else {
+    setTimeout(injectBtn, 500);
+  }
+})();
+</script>
+<div class="card mt-3" id="snmp-ifaces-card">
+  <div class="card-header d-flex align-items-center justify-content-between">
+    <strong>
+      <i class="mdi mdi-radar text-info me-1"></i> SNMP Inspector — Interfejsy
+    </strong>
+    <div class="d-flex align-items-center gap-2">
+      <div class="btn-group btn-group-sm">
+        <input type="radio" class="btn-check" name="snmp-iface-ver" id="snmp-iface-v2c" value="v2c" checked>
+        <label class="btn btn-outline-info" for="snmp-iface-v2c">v2c</label>
+        <input type="radio" class="btn-check" name="snmp-iface-ver" id="snmp-iface-v3" value="v3">
+        <label class="btn btn-outline-info" for="snmp-iface-v3">v3</label>
+      </div>
+      <button id="snmp-iface-fetch-btn" onclick="snmpIfaceFetch({{ device.pk }})"
+              class="btn btn-sm btn-primary">
+        <i class="mdi mdi-download-network"></i> Pobierz z urządzenia
+      </button>
+    </div>
+  </div>
+
+  <div class="card-body p-0">
+    <div id="snmp-iface-placeholder" class="text-center py-4 text-secondary">
+      <i class="mdi mdi-network-outline fs-4 d-block mb-2"></i>
+      Wybierz wersję SNMP i kliknij „Pobierz z urządzenia"
+    </div>
+
+    <div id="snmp-iface-loading" style="display:none;" class="text-center py-4">
+      <div class="spinner-border text-info mb-2" role="status"></div>
+      <div id="snmp-iface-loading-msg" class="text-secondary small"></div>
+    </div>
+
+    <div id="snmp-iface-error" style="display:none;" class="alert alert-danger m-3"></div>
+
+    <div id="snmp-iface-results" style="display:none;">
+      <div id="snmp-iface-statusbar" class="alert mb-0" style="border-radius:0;border-left:none;border-right:none;border-top:none;"></div>
+
+      <div class="px-3 py-2 d-flex align-items-center justify-content-between border-bottom">
+        <div class="d-flex gap-2 align-items-center">
+          <input type="text" id="snmp-iface-filter" class="form-control form-control-sm"
+                 placeholder="Filtruj interfejsy..." oninput="snmpIfaceFilter()"
+                 style="width:220px;">
+          <label class="form-check mb-0 ms-2">
+            <input type="checkbox" class="form-check-input" id="snmp-iface-only-diff"
+                   onchange="snmpIfaceFilter()">
+            <span class="form-check-label small">tylko różnice</span>
+          </label>
+          <label class="form-check mb-0">
+            <input type="checkbox" class="form-check-input" id="snmp-iface-select-all"
+                   onchange="snmpIfaceSelectAll(this)">
+            <span class="form-check-label small">zaznacz wszystkie</span>
+          </label>
+        </div>
+        <button id="snmp-iface-sync-btn" onclick="snmpIfaceSync({{ device.pk }})"
+                class="btn btn-sm btn-success" style="display:none;">
+          <i class="mdi mdi-content-save"></i> Synchronizuj zaznaczone
+        </button>
+      </div>
+
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead>
+            <tr>
+              <th style="width:36px;"></th>
+              <th>Nazwa</th>
+              <th>Opis (ifDescr)</th>
+              <th>Label (ifAlias)</th>
+              <th style="text-align:center;">Status</th>
+              <th style="text-align:right;">Prędkość</th>
+              <th style="text-align:center;">W NetBoxie</th>
+              <th>Opis NB</th>
+            </tr>
+          </thead>
+          <tbody id="snmp-iface-tbody"></tbody>
+        </table>
+      </div>
+
+      <div id="snmp-iface-sync-result" style="display:none;"
+           class="px-3 py-2 border-top small"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+if(window._snmpIfaceReady) return;
+window._snmpIfaceReady = true;
+
+let _lastData = [];
+
+window.snmpIfaceFetch = function(deviceId) {
+  const ver = document.querySelector('input[name="snmp-iface-ver"]:checked').value;
+  const btn = document.getElementById('snmp-iface-fetch-btn');
+  btn.disabled = true;
+
+  document.getElementById('snmp-iface-placeholder').style.display = 'none';
+  document.getElementById('snmp-iface-results').style.display = 'none';
+  document.getElementById('snmp-iface-error').style.display = 'none';
+  document.getElementById('snmp-iface-loading').style.display = 'block';
+  document.getElementById('snmp-iface-sync-result').style.display = 'none';
+
+  const msgs = ['Łączę z urządzeniem...','Pobieram ifTable + ifXTable...','Porównuję z NetBoxem...'];
+  let mi = 0;
+  const mel = document.getElementById('snmp-iface-loading-msg');
+  const t = setInterval(() => { if(mi < msgs.length) mel.textContent = msgs[mi++]; }, 500);
+
+  fetch(`/plugins/snmp/device/${deviceId}/fetch-interfaces/`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':_snmpCsrf()},
+    body: JSON.stringify({snmp_version: ver}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    clearInterval(t); btn.disabled = false;
+    document.getElementById('snmp-iface-loading').style.display = 'none';
+    if(data.error) {
+      document.getElementById('snmp-iface-error').textContent = data.error;
+      document.getElementById('snmp-iface-error').style.display = 'block';
+      return;
+    }
+    _lastData = data.interfaces;
+    _renderIfaceTable(data);
+    document.getElementById('snmp-iface-results').style.display = 'block';
+  })
+  .catch(err => {
+    clearInterval(t); btn.disabled = false;
+    document.getElementById('snmp-iface-loading').style.display = 'none';
+    document.getElementById('snmp-iface-error').textContent = 'Błąd: ' + err;
+    document.getElementById('snmp-iface-error').style.display = 'block';
+  });
+};
+
+function _renderIfaceTable(data) {
+  const tbody = document.getElementById('snmp-iface-tbody');
+  tbody.innerHTML = '';
+  let diffs = 0, news = 0;
+
+  data.interfaces.forEach((item, idx) => {
+    const s = item.snmp, nb = item.netbox;
+    const isDiff = nb && (nb.description !== s.description || nb.label !== s.label);
+    const isNew = !nb;
+    if(isDiff) diffs++;
+    if(isNew) news++;
+
+    const speedStr = s.speed_mbps >= 1000 ? `${s.speed_mbps/1000} Gbps`
+                   : s.speed_mbps > 0 ? `${s.speed_mbps} Mbps` : '—';
+    const operBadge = s.oper_status === 'up'
+      ? '<span class="badge bg-success text-white">▲ up</span>'
+      : '<span class="badge bg-danger text-white">▼ down</span>';
+    const nbBadge = nb
+      ? '<span class="badge bg-primary text-white">✓</span>'
+      : '<span class="badge bg-secondary text-white">brak</span>';
+    const nbDescr = nb
+      ? `<span class="${isDiff?'text-warning fw-semibold':''}">${_esc(nb.description)||'—'}</span>`
+      : '<span class="text-secondary">—</span>';
+
+    const defaultCheck = isNew || isDiff;
+    const rowStyle = isNew ? 'table-success' : isDiff ? 'table-warning' : '';
+
+    tbody.insertAdjacentHTML('beforeend', `<tr class="${rowStyle}"
+        data-name="${_esc(s.name)}" data-diff="${isDiff?1:0}" data-new="${isNew?1:0}">
+      <td>${(isNew||isDiff)?`<input type="checkbox" class="form-check-input snmp-iface-check"
+            data-idx="${idx}" ${defaultCheck?'checked':''} onchange="snmpIfaceCheckChange()">`:''}</td>
+      <td><strong>${_esc(s.name)}</strong></td>
+      <td>${_esc(s.description)||'—'}</td>
+      <td>${_esc(s.label)||'—'}</td>
+      <td style="text-align:center;">${operBadge}</td>
+      <td style="text-align:right;" class="text-secondary">${speedStr}</td>
+      <td style="text-align:center;">${nbBadge}</td>
+      <td>${nbDescr}</td>
+    </tr>`);
+  });
+
+  const sb = document.getElementById('snmp-iface-statusbar');
+  if(!diffs && !news) {
+    sb.className = 'alert alert-success mb-0';
+    sb.innerHTML = '<i class="mdi mdi-check-circle me-1"></i>Dane zgodne z NetBoxem';
+  } else {
+    sb.className = 'alert alert-warning mb-0';
+    sb.innerHTML = `<i class="mdi mdi-alert me-1"></i>Wykryto różnice: <strong>${diffs}</strong> do aktualizacji, <strong>${news}</strong> nowych`;
+  }
+  sb.style.cssText = 'border-radius:0;border-left:none;border-right:none;border-top:none;';
+  snmpIfaceCheckChange();
+}
+
+window.snmpIfaceFilter = function() {
+  const q = document.getElementById('snmp-iface-filter').value.toLowerCase();
+  const onlyDiff = document.getElementById('snmp-iface-only-diff').checked;
+  document.querySelectorAll('#snmp-iface-tbody tr').forEach(row => {
+    const name = (row.dataset.name||'').toLowerCase();
+    const diff = row.dataset.diff === '1' || row.dataset.new === '1';
+    row.style.display = (!q || name.includes(q)) && (!onlyDiff || diff) ? '' : 'none';
+  });
+};
+
+window.snmpIfaceSelectAll = function(cb) {
+  document.querySelectorAll('.snmp-iface-check').forEach(c => c.checked = cb.checked);
+  snmpIfaceCheckChange();
+};
+
+window.snmpIfaceCheckChange = function() {
+  const any = Array.from(document.querySelectorAll('.snmp-iface-check:checked')).length > 0;
+  document.getElementById('snmp-iface-sync-btn').style.display = any ? 'inline-block' : 'none';
+};
+
+window.snmpIfaceSync = function(deviceId) {
+  const items = [];
+  document.querySelectorAll('.snmp-iface-check:checked').forEach(cb => {
+    const idx = parseInt(cb.dataset.idx);
+    const item = _lastData[idx];
+    items.push({snmp: item.snmp, netbox_id: item.netbox ? item.netbox.id : null,
+                action: item.netbox ? 'update' : 'create'});
+  });
+  if(!items.length) return;
+
+  const btn = document.getElementById('snmp-iface-sync-btn');
+  btn.disabled = true; btn.textContent = 'Synchronizuję...';
+
+  fetch(`/plugins/snmp/device/${deviceId}/sync-interfaces/`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json','X-CSRFToken':_snmpCsrf()},
+    body: JSON.stringify({interfaces: items}),
+  })
+  .then(r => r.json())
+  .then(res => {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="mdi mdi-content-save"></i> Synchronizuj zaznaczone';
+    const el = document.getElementById('snmp-iface-sync-result');
+    const created = res.results.filter(r => r.action==='created').length;
+    const updated = res.results.filter(r => r.action==='updated').length;
+    const errors  = res.results.filter(r => r.action==='error').length;
+    el.innerHTML = `<span class="text-success">✓ ${created} utworzono, ${updated} zaktualizowano</span>`
+      + (errors ? ` <span class="text-danger">✗ ${errors} błędów</span>` : '');
+    el.style.display = 'block';
+  })
+  .catch(e => { btn.disabled = false; btn.innerHTML = '<i class="mdi mdi-content-save"></i> Synchronizuj zaznaczone'; });
+};
+
+function _snmpCsrf(){
+  const m=document.querySelector('meta[name="csrf-token"]'); if(m) return m.getAttribute('content');
+  const i=document.querySelector('input[name="csrfmiddlewaretoken"]'); if(i) return i.value;
+  const c=document.cookie.split(';').find(x=>x.trim().startsWith('csrftoken=')); return c?c.split('=')[1].trim():'';
+}
+function _esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+})();
+</script>
